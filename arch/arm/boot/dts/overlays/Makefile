@@ -147,6 +147,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	justboom-dac.dtbo \
 	justboom-digi.dtbo \
 	ltc294x.dtbo \
+	max96792-pt-ox03j10.dtbo \
 	max98357a.dtbo \
 	maxtherm.dtbo \
 	mbed-dac.dtbo \

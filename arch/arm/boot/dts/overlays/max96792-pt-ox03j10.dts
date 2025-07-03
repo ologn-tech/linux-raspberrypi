@@ -1,0 +1,127 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+
+ / {
+     compatible = "raspberrypi,bcm2712";
+
+     max96792_osc: max96792-osc {
+         compatible = "fixed-clock";
+         #clock-cells = <0>;
+         clock-frequency = <25000000>;
+         clock-output-names = "max96792_clk";
+     };
+
+     fragment@0 {
+         target = <&i2c0>;
+         __overlay__ {
+             status = "okay";
+             #address-cells = <1>;
+             #size-cells = <0>;
+
+             max96792: deserializer@55 {
+                 compatible = "maxim,max96792";
+                 reg = <0x55>;
+                 csi-mode = "2x4";
+                 max-src = <1>;
+                 reset-gpios = <&gpio 4 10 GPIO_ACTIVE_HIGH>;
+                 vdd_cam_1v2-supply = <&reg_vdd_cam_1v2>;
+                 clocks = <&max96792_osc>;
+                 clock-names = "xvclk";
+                 maxim,enable-i2c-pt;
+
+                 i2c-mux {
+                     #address-cells = <1>;
+                     #size-cells = <0>;
+
+                     i2c@0 {
+                         reg = <0>;
+                         #address-cells = <1>;
+                         #size-cells = <0>;
+
+                         max96793: serializer@31 {
+                             compatible = "maxim,max96793";
+                             reg = <0x31>;
+                             maxim,gmsl-link = <0>;
+
+                             ports {
+                                 #address-cells = <1>;
+                                 #size-cells = <0>;
+
+                                 port@0 {
+                                     reg = <0>;
+                                     serializer_sink: endpoint {
+                                         remote-endpoint = <&ox03j10_out>;
+                                     };
+                                 };
+                                 port@1 {
+                                     reg = <1>;
+                                     serializer_out: endpoint {
+                                         remote-endpoint = <&max96792_in>;
+                                         data-lanes = <1 2>;
+                                     };
+                                 };
+                             };
+                         };
+
+                         ox03j10: camera@36 {
+                             compatible = "ovti,ox03j10";
+                             reg = <0x36>;
+                             clocks = <&max96792_osc>;
+                             clock-names = "xvclk";
+
+                             port {
+                                 ox03j10_out: endpoint {
+                                     remote-endpoint = <&serializer_sink>;
+                                     data-lanes = <1 2>;
+                                     bus-type = <5>;
+                                 };
+                             };
+                         };
+                     };
+                 };
+
+                 ports {
+                     #address-cells = <1>;
+                     #size-cells = <0>;
+
+                     port@0 {
+                         reg = <0>;
+                         max96792_in: endpoint {
+                             remote-endpoint = <&serializer_out>;
+                         };
+                     };
+                     port@4 {
+                         reg = <4>;
+                         max96792_out: endpoint {
+                             remote-endpoint = <&csi0_in>;
+                             data-lanes = <1 2>;
+                             bus-type = <5>;
+                         };
+                     };
+                 };
+             };
+         };
+     };
+
+     fragment@1 {
+         target = <&csi0>;
+         __overlay__ {
+             status = "okay";
+             port {
+                 csi0_in: endpoint {
+                     remote-endpoint = <&max96792_out>;
+                 };
+             };
+         };
+     };
+
+     reg_vdd_cam_1v2: regulator-vdd-cam-1v2 {
+         compatible = "regulator-fixed";
+         regulator-name = "vdd_cam_1v2";
+         regulator-min-microvolt = <1200000>;
+         regulator-max-microvolt = <1200000>;
+         regulator-always-on;
+     };
+ };
