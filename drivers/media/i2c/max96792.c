@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Maxim MAX96712 Quad GMSL2 Deserializer Driver
+ * Maxim MAX96792 Quad GMSL2 Deserializer Driver
  *
  * Copyright (C) 2021 Renesas Electronics Corporation
  * Copyright (C) 2021 Niklas Söderlund
@@ -16,16 +16,16 @@
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
 
-#define MAX96712_ID 0x20
+#define max96792_ID 0xB6
 
-#define MAX96712_DPLL_FREQ 1000
+#define max96792_DPLL_FREQ 1000
 
-enum max96712_pattern {
-	MAX96712_PATTERN_CHECKERBOARD = 0,
-	MAX96712_PATTERN_GRADIENT,
+enum max96792_pattern {
+	max96792_PATTERN_CHECKERBOARD = 0,
+	max96792_PATTERN_GRADIENT,
 };
 
-struct max96712_priv {
+struct max96792_priv {
 	struct i2c_client *client;
 	struct regmap *regmap;
 	struct gpio_desc *gpiod_pwdn;
@@ -37,11 +37,12 @@ struct max96712_priv {
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct media_pad pads[1];
 
-	enum max96712_pattern pattern;
+	enum max96792_pattern pattern;
 };
 
-static int max96712_read(struct max96712_priv *priv, int reg)
+static int max96792_read(struct max96792_priv *priv, int reg)
 {
+	/* Đọc giá trị từ 1 thanh ghi */
 	int ret, val;
 
 	ret = regmap_read(priv->regmap, reg, &val);
@@ -53,8 +54,9 @@ static int max96712_read(struct max96712_priv *priv, int reg)
 	return val;
 }
 
-static int max96712_write(struct max96712_priv *priv, unsigned int reg, u8 val)
+static int max96792_write(struct max96792_priv *priv, unsigned int reg, u8 val)
 {
+	/* Ghi giá trị vào 1 thanh ghi */
 	int ret;
 
 	ret = regmap_write(priv->regmap, reg, val);
@@ -64,9 +66,10 @@ static int max96712_write(struct max96712_priv *priv, unsigned int reg, u8 val)
 	return ret;
 }
 
-static int max96712_update_bits(struct max96712_priv *priv, unsigned int reg,
+static int max96792_update_bits(struct max96792_priv *priv, unsigned int reg,
 				u8 mask, u8 val)
 {
+	/* Cập nhật các bit trong 1 thanh ghi */
 	int ret;
 
 	ret = regmap_update_bits(priv->regmap, reg, mask, val);
@@ -76,9 +79,10 @@ static int max96712_update_bits(struct max96712_priv *priv, unsigned int reg,
 	return ret;
 }
 
-static int max96712_write_bulk(struct max96712_priv *priv, unsigned int reg,
+static int max96792_write_bulk(struct max96792_priv *priv, unsigned int reg,
 			       const void *val, size_t val_count)
 {
+	/* Dùng khi cần ghi nhiều byte dữ liệu, ví dụ: cấu hình một bảng thông số hoặc gửi dữ liệu lớn vào chip. */
 	int ret;
 
 	ret = regmap_bulk_write(priv->regmap, reg, val, val_count);
@@ -88,82 +92,87 @@ static int max96712_write_bulk(struct max96712_priv *priv, unsigned int reg,
 	return ret;
 }
 
-static int max96712_write_bulk_value(struct max96712_priv *priv,
+static int max96792_write_bulk_value(struct max96792_priv *priv,
 				     unsigned int reg, unsigned int val,
 				     size_t val_count)
 {
+	/* Dùng để ghi các giá trị lớn (như tần số hoặc cấu hình đa byte) vào các thanh ghi liên tiếp. */
 	unsigned int i;
 	u8 values[4];
 
 	for (i = 1; i <= val_count; i++)
 		values[i - 1] = (val >> ((val_count - i) * 8)) & 0xff;
 
-	return max96712_write_bulk(priv, reg, &values, val_count);
+	return max96792_write_bulk(priv, reg, &values, val_count);
 }
 
-static void max96712_reset(struct max96712_priv *priv)
+static void max96792_reset(struct max96792_priv *priv)
 {
-	max96712_update_bits(priv, 0x13, 0x40, 0x40);
+	/* Đã sửa theo 96792A */
+	max96792_update_bits(priv, 0x10, 0x80, 0x80);
 	msleep(20);
 }
 
-static void max96712_mipi_enable(struct max96712_priv *priv, bool enable)
+static void max96792_mipi_enable(struct max96792_priv *priv, bool enable)
 {
+	/* Enable or disable MIPI */
 	if (enable) {
-		max96712_update_bits(priv, 0x40b, 0x02, 0x02);
-		max96712_update_bits(priv, 0x8a0, 0x80, 0x80);
+		// Enable CSI output
+		max96792_update_bits(priv, 0x313, 0x02, 0x02);
+		// Enable Video Pipes Y and Z
+		max96792_update_bits(priv, 0x160, 0x03, 0x03); 
 	} else {
-		max96712_update_bits(priv, 0x8a0, 0x80, 0x00);
-		max96712_update_bits(priv, 0x40b, 0x02, 0x00);
+		// Disable CSI output
+		max96792_update_bits(priv, 0x313, 0x02, 0x00);
+		// Disable Video Pipes Y and Z
+		max96792_update_bits(priv, 0x160, 0x03, 0x00); 
 	}
 }
 
-static void max96712_mipi_configure(struct max96712_priv *priv)
+static void max96792_mipi_configure(struct max96792_priv *priv)
 {
-	/* Cấu hình giao diện MIPI CSI-2 (D-PHY hoặc C-PHY) của MAX96712 
-		để nhận dữ liệu từ liên kết GMSL2 và xuất ra bộ xử lý. */
 	unsigned int i;
 	u8 phy5 = 0;
 
-	max96712_mipi_enable(priv, false);
+	max96792_mipi_enable(priv, false);
 
 	/* Select 2x4 mode. */
-	max96712_write(priv, 0x8a0, 0x04);
+	max96792_write(priv, 0x330, 0x04);
 
 	/* TODO: Add support for 2-lane and 1-lane configurations. */
 	if (priv->cphy) {
 		/* Configure a 3-lane C-PHY using PHY0 and PHY1. */
-		max96712_write(priv, 0x94a, 0xa0);
+		max96792_write(priv, 0x94a, 0xa0);
 
 		/* Configure C-PHY timings. */
-		max96712_write(priv, 0x8ad, 0x3f);
-		max96712_write(priv, 0x8ae, 0x7d);
+		max96792_write(priv, 0x8ad, 0x3f);
+		max96792_write(priv, 0x8ae, 0x7d);
 	} else {
 		/* Configure a 4-lane D-PHY using PHY0 and PHY1. */
-		max96712_write(priv, 0x94a, 0xc0);
+		max96792_write(priv, 0x94a, 0xc0);
 	}
 
 	/* Configure lane mapping for PHY0 and PHY1. */
 	/* TODO: Add support for lane swapping. */
-	max96712_write(priv, 0x8a3, 0xe4);
+	max96792_write(priv, 0x8a3, 0xe4);
 
 	/* Configure lane polarity for PHY0 and PHY1. */
 	for (i = 0; i < priv->mipi.num_data_lanes + 1; i++)
 		if (priv->mipi.lane_polarities[i])
 			phy5 |= BIT(i == 0 ? 5 : i < 3 ? i - 1 : i);
-	max96712_write(priv, 0x8a5, phy5);
+	max96792_write(priv, 0x8a5, phy5);
 
 	/* Set link frequency for PHY0 and PHY1. */
-	max96712_update_bits(priv, 0x415, 0x3f,
-			     ((MAX96712_DPLL_FREQ / 100) & 0x1f) | BIT(5));
-	max96712_update_bits(priv, 0x418, 0x3f,
-			     ((MAX96712_DPLL_FREQ / 100) & 0x1f) | BIT(5));
+	max96792_update_bits(priv, 0x415, 0x3f,
+			     ((max96792_DPLL_FREQ / 100) & 0x1f) | BIT(5));
+	max96792_update_bits(priv, 0x418, 0x3f,
+			     ((max96792_DPLL_FREQ / 100) & 0x1f) | BIT(5));
 
 	/* Enable PHY0 and PHY1 */
-	max96712_update_bits(priv, 0x8a2, 0xf0, 0x30);
+	max96792_update_bits(priv, 0x8a2, 0xf0, 0x30);
 }
 
-static void max96712_pattern_enable(struct max96712_priv *priv, bool enable)
+static void max96792_pattern_enable(struct max96792_priv *priv, bool enable)
 {
 	const u32 h_active = 1920;
 	const u32 h_fp = 88;
@@ -178,73 +187,73 @@ static void max96712_pattern_enable(struct max96712_priv *priv, bool enable)
 	const u32 v_tot = v_active + v_fp + v_sw + v_bp;
 
 	if (!enable) {
-		max96712_write(priv, 0x1051, 0x00);
+		max96792_write(priv, 0x1051, 0x00);
 		return;
 	}
 
 	/* PCLK 75MHz. */
-	max96712_write(priv, 0x0009, 0x01);
+	max96792_write(priv, 0x0009, 0x01);
 
 	/* Configure Video Timing Generator for 1920x1080 @ 30 fps. */
-	max96712_write_bulk_value(priv, 0x1052, 0, 3);
-	max96712_write_bulk_value(priv, 0x1055, v_sw * h_tot, 3);
-	max96712_write_bulk_value(priv, 0x1058,
+	max96792_write_bulk_value(priv, 0x1052, 0, 3);
+	max96792_write_bulk_value(priv, 0x1055, v_sw * h_tot, 3);
+	max96792_write_bulk_value(priv, 0x1058,
 				  (v_active + v_fp + + v_bp) * h_tot, 3);
-	max96712_write_bulk_value(priv, 0x105b, 0, 3);
-	max96712_write_bulk_value(priv, 0x105e, h_sw, 2);
-	max96712_write_bulk_value(priv, 0x1060, h_active + h_fp + h_bp, 2);
-	max96712_write_bulk_value(priv, 0x1062, v_tot, 2);
-	max96712_write_bulk_value(priv, 0x1064,
+	max96792_write_bulk_value(priv, 0x105b, 0, 3);
+	max96792_write_bulk_value(priv, 0x105e, h_sw, 2);
+	max96792_write_bulk_value(priv, 0x1060, h_active + h_fp + h_bp, 2);
+	max96792_write_bulk_value(priv, 0x1062, v_tot, 2);
+	max96792_write_bulk_value(priv, 0x1064,
 				  h_tot * (v_sw + v_bp) + (h_sw + h_bp), 3);
-	max96712_write_bulk_value(priv, 0x1067, h_active, 2);
-	max96712_write_bulk_value(priv, 0x1069, h_fp + h_sw + h_bp, 2);
-	max96712_write_bulk_value(priv, 0x106b, v_active, 2);
+	max96792_write_bulk_value(priv, 0x1067, h_active, 2);
+	max96792_write_bulk_value(priv, 0x1069, h_fp + h_sw + h_bp, 2);
+	max96792_write_bulk_value(priv, 0x106b, v_active, 2);
 
 	/* Generate VS, HS and DE in free-running mode. */
-	max96712_write(priv, 0x1050, 0xfb);
+	max96792_write(priv, 0x1050, 0xfb);
 
 	/* Configure Video Pattern Generator. */
-	if (priv->pattern == MAX96712_PATTERN_CHECKERBOARD) {
+	if (priv->pattern == max96792_PATTERN_CHECKERBOARD) {
 		/* Set checkerboard pattern size. */
-		max96712_write(priv, 0x1074, 0x3c);
-		max96712_write(priv, 0x1075, 0x3c);
-		max96712_write(priv, 0x1076, 0x3c);
+		max96792_write(priv, 0x1074, 0x3c);
+		max96792_write(priv, 0x1075, 0x3c);
+		max96792_write(priv, 0x1076, 0x3c);
 
 		/* Set checkerboard pattern colors. */
-		max96712_write_bulk_value(priv, 0x106e, 0xfecc00, 3);
-		max96712_write_bulk_value(priv, 0x1071, 0x006aa7, 3);
+		max96792_write_bulk_value(priv, 0x106e, 0xfecc00, 3);
+		max96792_write_bulk_value(priv, 0x1071, 0x006aa7, 3);
 
 		/* Generate checkerboard pattern. */
-		max96712_write(priv, 0x1051, 0x10);
+		max96792_write(priv, 0x1051, 0x10);
 	} else {
 		/* Set gradient increment. */
-		max96712_write(priv, 0x106d, 0x10);
+		max96792_write(priv, 0x106d, 0x10);
 
 		/* Generate gradient pattern. */
-		max96712_write(priv, 0x1051, 0x20);
+		max96792_write(priv, 0x1051, 0x20);
 	}
 }
 
-static int max96712_s_stream(struct v4l2_subdev *sd, int enable)
+static int max96792_s_stream(struct v4l2_subdev *sd, int enable)
 {
-	struct max96712_priv *priv = v4l2_get_subdevdata(sd);
+	struct max96792_priv *priv = v4l2_get_subdevdata(sd);
 
 	if (enable) {
-		max96712_pattern_enable(priv, true);
-		max96712_mipi_enable(priv, true);
+		max96792_pattern_enable(priv, true);
+		max96792_mipi_enable(priv, true);
 	} else {
-		max96712_mipi_enable(priv, false);
-		max96712_pattern_enable(priv, false);
+		max96792_mipi_enable(priv, false);
+		max96792_pattern_enable(priv, false);
 	}
 
 	return 0;
 }
 
-static const struct v4l2_subdev_video_ops max96712_video_ops = {
-	.s_stream = max96712_s_stream,
+static const struct v4l2_subdev_video_ops max96792_video_ops = {
+	.s_stream = max96792_s_stream,
 };
 
-static int max96712_init_state(struct v4l2_subdev *sd,
+static int max96792_init_state(struct v4l2_subdev *sd,
 			       struct v4l2_subdev_state *state)
 {
 	static const struct v4l2_mbus_framefmt default_fmt = {
@@ -265,51 +274,51 @@ static int max96712_init_state(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static const struct v4l2_subdev_internal_ops max96712_internal_ops = {
-	.init_state = max96712_init_state,
+static const struct v4l2_subdev_internal_ops max96792_internal_ops = {
+	.init_state = max96792_init_state,
 };
 
-static const struct v4l2_subdev_pad_ops max96712_pad_ops = {
+static const struct v4l2_subdev_pad_ops max96792_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = v4l2_subdev_get_fmt,
 };
 
-static const struct v4l2_subdev_ops max96712_subdev_ops = {
-	.video = &max96712_video_ops,
-	.pad = &max96712_pad_ops,
+static const struct v4l2_subdev_ops max96792_subdev_ops = {
+	.video = &max96792_video_ops,
+	.pad = &max96792_pad_ops,
 };
 
-static const char * const max96712_test_pattern[] = {
+static const char * const max96792_test_pattern[] = {
 	"Checkerboard",
 	"Gradient",
 };
 
-static int max96712_s_ctrl(struct v4l2_ctrl *ctrl)
+static int max96792_s_ctrl(struct v4l2_ctrl *ctrl)
 {
-	struct max96712_priv *priv =
-		container_of(ctrl->handler, struct max96712_priv, ctrl_handler);
+	struct max96792_priv *priv =
+		container_of(ctrl->handler, struct max96792_priv, ctrl_handler);
 
 	switch (ctrl->id) {
 	case V4L2_CID_TEST_PATTERN:
 		priv->pattern = ctrl->val ?
-			MAX96712_PATTERN_GRADIENT :
-			MAX96712_PATTERN_CHECKERBOARD;
+			max96792_PATTERN_GRADIENT :
+			max96792_PATTERN_CHECKERBOARD;
 		break;
 	}
 	return 0;
 }
 
-static const struct v4l2_ctrl_ops max96712_ctrl_ops = {
-	.s_ctrl = max96712_s_ctrl,
+static const struct v4l2_ctrl_ops max96792_ctrl_ops = {
+	.s_ctrl = max96792_s_ctrl,
 };
 
-static int max96712_v4l2_register(struct max96712_priv *priv)
+static int max96792_v4l2_register(struct max96792_priv *priv)
 {
 	long pixel_rate;
 	int ret;
 
-	priv->sd.internal_ops = &max96712_internal_ops;
-	v4l2_i2c_subdev_init(&priv->sd, priv->client, &max96712_subdev_ops);
+	priv->sd.internal_ops = &max96792_internal_ops;
+	v4l2_i2c_subdev_init(&priv->sd, priv->client, &max96792_subdev_ops);
 	priv->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	priv->sd.entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
 
@@ -319,14 +328,14 @@ static int max96712_v4l2_register(struct max96712_priv *priv)
 	 * TODO: Once V4L2_CID_LINK_FREQ is changed from a menu control to an
 	 * INT64 control it should be used here instead of V4L2_CID_PIXEL_RATE.
 	 */
-	pixel_rate = MAX96712_DPLL_FREQ / priv->mipi.num_data_lanes * 1000000;
+	pixel_rate = max96792_DPLL_FREQ / priv->mipi.num_data_lanes * 1000000;
 	v4l2_ctrl_new_std(&priv->ctrl_handler, NULL, V4L2_CID_PIXEL_RATE,
 			  pixel_rate, pixel_rate, 1, pixel_rate);
 
-	v4l2_ctrl_new_std_menu_items(&priv->ctrl_handler, &max96712_ctrl_ops,
+	v4l2_ctrl_new_std_menu_items(&priv->ctrl_handler, &max96792_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
-				     ARRAY_SIZE(max96712_test_pattern) - 1,
-				     0, 0, max96712_test_pattern);
+				     ARRAY_SIZE(max96792_test_pattern) - 1,
+				     0, 0, max96792_test_pattern);
 
 	priv->sd.ctrl_handler = &priv->ctrl_handler;
 	ret = priv->ctrl_handler.error;
@@ -358,7 +367,7 @@ error:
 	return ret;
 }
 
-static int max96712_parse_dt(struct max96712_priv *priv)
+static int max96792_parse_dt(struct max96792_priv *priv)
 {
 	struct fwnode_handle *ep;
 	struct v4l2_fwnode_endpoint v4l2_ep = {
@@ -407,15 +416,15 @@ static int max96712_parse_dt(struct max96712_priv *priv)
 	return 0;
 }
 
-static const struct regmap_config max96712_i2c_regmap = {
+static const struct regmap_config max96792_i2c_regmap = {
 	.reg_bits = 16,
 	.val_bits = 8,
-	.max_register = 0x1f00,
+	.max_register = 0x52D6,
 };
 
-static int max96712_probe(struct i2c_client *client)
+static int max96792_probe(struct i2c_client *client)
 {
-	struct max96712_priv *priv;
+	struct max96792_priv *priv;
 	int ret;
 
 	priv = devm_kzalloc(&client->dev, sizeof(*priv), GFP_KERNEL);
@@ -424,7 +433,7 @@ static int max96712_probe(struct i2c_client *client)
 
 	priv->client = client;
 
-	priv->regmap = devm_regmap_init_i2c(client, &max96712_i2c_regmap);
+	priv->regmap = devm_regmap_init_i2c(client, &max96792_i2c_regmap);
 	if (IS_ERR(priv->regmap))
 		return PTR_ERR(priv->regmap);
 
@@ -433,53 +442,53 @@ static int max96712_probe(struct i2c_client *client)
 	if (IS_ERR(priv->gpiod_pwdn))
 		return PTR_ERR(priv->gpiod_pwdn);
 
-	gpiod_set_consumer_name(priv->gpiod_pwdn, "max96712-pwdn");
+	gpiod_set_consumer_name(priv->gpiod_pwdn, "max96792-pwdn");
 	gpiod_set_value_cansleep(priv->gpiod_pwdn, 1);
 
 	if (priv->gpiod_pwdn)
 		usleep_range(4000, 5000);
 
-	if (max96712_read(priv, 0x4a) != MAX96712_ID)
+	if (max96792_read(priv, 0x0D) != max96792_ID)              /* Này đã sửa theo datasheet */
 		return -ENODEV;
 
-	max96712_reset(priv);
+	max96792_reset(priv);
 
-	ret = max96712_parse_dt(priv);
+	ret = max96792_parse_dt(priv);
 	if (ret)
 		return ret;
 
-	max96712_mipi_configure(priv);
+	max96792_mipi_configure(priv);
 
-	return max96712_v4l2_register(priv);
+	return max96792_v4l2_register(priv);
 }
 
-static void max96712_remove(struct i2c_client *client)
+static void max96792_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct max96712_priv *priv = container_of(sd, struct max96712_priv, sd);
+	struct max96792_priv *priv = container_of(sd, struct max96792_priv, sd);
 
 	v4l2_async_unregister_subdev(&priv->sd);
 
 	gpiod_set_value_cansleep(priv->gpiod_pwdn, 0);
 }
 
-static const struct of_device_id max96712_of_table[] = {
-	{ .compatible = "maxim,max96712" },
+static const struct of_device_id max96792_of_table[] = {
+	{ .compatible = "maxim,max96792A" },
 	{ /* sentinel */ },
 };
-MODULE_DEVICE_TABLE(of, max96712_of_table);
+MODULE_DEVICE_TABLE(of, max96792_of_table);
 
-static struct i2c_driver max96712_i2c_driver = {
+static struct i2c_driver max96792_i2c_driver = {
 	.driver	= {
-		.name = "max96712",
-		.of_match_table	= of_match_ptr(max96712_of_table),
+		.name = "max96792",
+		.of_match_table	= of_match_ptr(max96792_of_table),
 	},
-	.probe = max96712_probe,
-	.remove = max96712_remove,
+	.probe = max96792_probe,
+	.remove = max96792_remove,
 };
 
-module_i2c_driver(max96712_i2c_driver);
+module_i2c_driver(max96792_i2c_driver);
 
-MODULE_DESCRIPTION("Maxim MAX96712 Quad GMSL2 Deserializer Driver");
-MODULE_AUTHOR("Niklas Söderlund <niklas.soderlund@ragnatech.se>");
+MODULE_DESCRIPTION("Maxim max96792 Quad GMSL2 Deserializer Driver");
+MODULE_AUTHOR("Cuong Le Duc <cuong.le@ologn.tech>");
 MODULE_LICENSE("GPL");

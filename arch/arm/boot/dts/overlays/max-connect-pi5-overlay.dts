@@ -1,0 +1,184 @@
+/dts-v1/;
+/plugin/;
+
+/{
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&i2c0if>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	clk_frag: fragment@1 {
+		target = <&cam1_clk>;
+		__overlay__ {
+			status = "okay";
+			clock-frequency = <24000000>;
+		};
+	};
+
+	fragment@2 {
+		target = <&i2c0mux>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+	
+	i2c_frag: fragment@100 {
+		target = <&i2c_csi_dsi>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+			deserializer: max96714f@4C {
+				status = "okay";
+				compatible = "maxim,max96714f";
+				reg = <0x4C>;
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					
+					port@0 {
+						reg = <0>;
+						max96714_gmsl_in: endpoint {
+							data-lanes = <1 2>;
+							remote-endpoint = <&max96917f_gmsl_out>;
+						};
+					};
+					
+					port@1 {
+						reg = <1>;
+						max96714_csi_out: endpoint {
+							data-lanes = <1 2>;
+							lane-polarities = <1 1 1>;
+							link-frequencies = /bits/ 64 <400000000>;
+							remote-endpoint = <&csi_ep>;
+						};
+					};
+				};
+
+				i2c-gate {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					status = "okay";
+					serializer: serializer@42 {
+						status = "okay";
+						compatible = "maxim,max96717f";
+						reg = <0x42>;
+						gpio-controller;
+						#gpio-cells = <2>;
+						#clock-cells = <0>;
+						ports {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							
+							port@0 {
+								reg = <0>;
+								max96717f_csi_in: endpoint {
+									data-lanes = <1 2>;
+									remote-endpoint = <&cam_endpoint>;
+								};
+							};
+							
+							port@1 {
+								reg = <1>;
+								max96917f_gmsl_out: endpoint {
+									remote-endpoint = <&max96714_gmsl_in>;
+								};
+							};
+						};
+						
+						i2c-gate {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							status = "okay";
+							
+							cam_node: imx219@10 {
+								compatible = "sony,imx219";
+								reg = <0x10>;
+								status = "okay";
+
+								clocks = <&cam1_clk>;
+								clock-names = "xclk";
+
+								VANA-supply = <&cam1_reg>;	/* 2.8v */
+								VDIG-supply = <&cam_dummy_reg>;	/* 1.8v */
+								VDDL-supply = <&cam_dummy_reg>;	/* 1.2v */
+
+								rotation = <180>;
+								orientation = <2>;	
+								
+								reset = <&serializer 0 1>;
+								
+								port {
+									cam_endpoint: endpoint {
+										clock-lanes = <0>;
+										data-lanes = <1 2>;
+										clock-noncontinuous;
+										link-frequencies =
+											/bits/ 64 <456000000>;
+									};
+								};
+							};
+							
+							vcm: ad5398@c {
+							compatible = "adi,ad5398";
+							reg = <0x0c>;
+							status = "disabled";
+							VANA-supply = <&cam1_reg>;
+						};
+						};
+					};
+				};
+			};
+		};
+	};
+
+	csi_frag: fragment@101 {
+		target = <&csi1>;
+		csi: __overlay__ {
+			status = "okay";
+			brcm,media-controller;
+			
+			port {
+				csi_ep: endpoint {
+					remote-endpoint = <&max96714_csi_out>;
+					clock-lanes = <0>;
+					data-lanes = <1 2>;
+					clock-noncontinuous;
+				};
+			};
+		};
+	};
+
+	fragment@102 {
+		target = <&csi1>;
+		__dormant__ {
+			compatible = "brcm,bcm2835-unicam-legacy";
+		};
+	};
+
+	__overrides__ {
+		rotation = <&cam_node>,"rotation:0";
+		orientation = <&cam_node>,"orientation:0";
+		media-controller = <0>,"!102";
+		cam0 = <&i2c_frag>, "target:0=",<&i2c_csi_dsi0>,
+		       <&csi_frag>, "target:0=",<&csi0>,
+		       <&clk_frag>, "target:0=",<&cam0_clk>,
+		       <&cam_node>, "clocks:0=",<&cam0_clk>,
+		       <&cam_node>, "VANA-supply:0=",<&cam0_reg>,
+		       <&vcm>, "VANA-supply:0=", <&cam0_reg>;
+		vcm = <&vcm>, "status=okay",
+		      <&cam_node>,"lens-focus:0=", <&vcm>;
+	};
+};
+
+&cam_node {
+	status = "okay";
+};
+
+&cam_endpoint {
+	remote-endpoint = <&max96717f_csi_in>;
+};

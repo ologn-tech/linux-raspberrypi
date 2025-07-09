@@ -111,9 +111,9 @@ examples:
         #address-cells = <1>;
         #size-cells = <0>;
 
-        deserializer@28 {
-            compatible = "maxim,max96714f";
-            reg = <0x28>;
+      deserializer@28 {
+          compatible = "maxim,max96714f";
+          reg = <0x28>;
             powerdown-gpios = <&main_gpio0 37 GPIO_ACTIVE_LOW>;
 
             ports {
