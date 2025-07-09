@@ -131,6 +131,7 @@ static void max96792_mipi_enable(struct max96792_priv *priv, bool enable)
 
 static void max96792_mipi_configure(struct max96792_priv *priv)
 {
+	/* Configure MIPI settings, ********************modified for max96792 */
 	unsigned int i;
 	u8 phy5 = 0;
 
@@ -142,34 +143,34 @@ static void max96792_mipi_configure(struct max96792_priv *priv)
 	/* TODO: Add support for 2-lane and 1-lane configurations. */
 	if (priv->cphy) {
 		/* Configure a 3-lane C-PHY using PHY0 and PHY1. */
-		max96792_write(priv, 0x94a, 0xa0);
+		max96792_write(priv, 0x44a, 0xa0);
 
 		/* Configure C-PHY timings. */
-		max96792_write(priv, 0x8ad, 0x3f);
-		max96792_write(priv, 0x8ae, 0x7d);
+		max96792_write(priv, 0x33d, 0x00);
+		max96792_write(priv, 0x33d, 0x11);
 	} else {
 		/* Configure a 4-lane D-PHY using PHY0 and PHY1. */
-		max96792_write(priv, 0x94a, 0xc0);
+		max96792_write(priv, 0x44a, 0xd0);
 	}
 
 	/* Configure lane mapping for PHY0 and PHY1. */
 	/* TODO: Add support for lane swapping. */
-	max96792_write(priv, 0x8a3, 0xe4);
+	max96792_write(priv, 0x333, 0x4e);
 
 	/* Configure lane polarity for PHY0 and PHY1. */
 	for (i = 0; i < priv->mipi.num_data_lanes + 1; i++)
 		if (priv->mipi.lane_polarities[i])
 			phy5 |= BIT(i == 0 ? 5 : i < 3 ? i - 1 : i);
-	max96792_write(priv, 0x8a5, phy5);
+	max96792_write(priv, 0x335, phy5);
 
 	/* Set link frequency for PHY0 and PHY1. */
-	max96792_update_bits(priv, 0x415, 0x3f,
+	max96792_update_bits(priv, 0x31d, 0x3f,
 			     ((max96792_DPLL_FREQ / 100) & 0x1f) | BIT(5));
-	max96792_update_bits(priv, 0x418, 0x3f,
+	max96792_update_bits(priv, 0x320, 0x3f,
 			     ((max96792_DPLL_FREQ / 100) & 0x1f) | BIT(5));
 
 	/* Enable PHY0 and PHY1 */
-	max96792_update_bits(priv, 0x8a2, 0xf0, 0x30);
+	max96792_update_bits(priv, 0x332, 0xf0, 0x30);
 }
 
 static void max96792_pattern_enable(struct max96792_priv *priv, bool enable)
