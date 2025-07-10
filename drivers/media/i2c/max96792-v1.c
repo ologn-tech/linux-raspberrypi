@@ -128,6 +128,8 @@ static void max96792_mipi_enable(struct max96792_priv *priv, bool enable)
 		max96792_update_bits(priv, 0x160, 0x03, 0x00); 
 	}
 }
+/* "Backtop" trong datasheet MAX96792A đề cập đến một nhóm các thanh ghi (register) 
+	được sử dụng để cấu hình và kiểm soát giao diện đầu ra MIPI CSI-2 của thiết bị */
 
 static void max96792_mipi_configure(struct max96792_priv *priv)
 {
@@ -188,50 +190,58 @@ static void max96792_pattern_enable(struct max96792_priv *priv, bool enable)
 	const u32 v_tot = v_active + v_fp + v_sw + v_bp;
 
 	if (!enable) {
-		max96792_write(priv, 0x1051, 0x00);
+		/* Tắt bộ tạo mẫu video bằng cách đặt PATGEN_MODE về 0b00 */
+		max96792_write(priv, 0x241, 0x00); // Disable pattern generator
 		return;
 	}
 
 	/* PCLK 75MHz. */
-	max96792_write(priv, 0x0009, 0x01);
+	/* 
+		Để cấu hình PCLK 75MHz cho bộ tạo mẫu video, cần đặt bit 0 của thanh ghi IO_CHK0 (0x38) là 1 và bit 1 là 0.
+		IO_CHK0 (0x38) Bit 1:0 PIN_DRV_EN_0 điều khiển tần số nguồn đồng hồ. [3]
+		Theo Bảng 11 (Video-Pattern Generator Pixel Clock Selection) [4]:
+		0x38[5]=0, 0x38=1 sẽ chọn 75MHz. 
+	*/
+	max96792_write(priv, 0x38, 0x01); 
 
 	/* Configure Video Timing Generator for 1920x1080 @ 30 fps. */
-	max96792_write_bulk_value(priv, 0x1052, 0, 3);
-	max96792_write_bulk_value(priv, 0x1055, v_sw * h_tot, 3);
-	max96792_write_bulk_value(priv, 0x1058,
-				  (v_active + v_fp + + v_bp) * h_tot, 3);
-	max96792_write_bulk_value(priv, 0x105b, 0, 3);
-	max96792_write_bulk_value(priv, 0x105e, h_sw, 2);
-	max96792_write_bulk_value(priv, 0x1060, h_active + h_fp + h_bp, 2);
-	max96792_write_bulk_value(priv, 0x1062, v_tot, 2);
-	max96792_write_bulk_value(priv, 0x1064,
-				  h_tot * (v_sw + v_bp) + (h_sw + h_bp), 3);
-	max96792_write_bulk_value(priv, 0x1067, h_active, 2);
-	max96792_write_bulk_value(priv, 0x1069, h_fp + h_sw + h_bp, 2);
-	max96792_write_bulk_value(priv, 0x106b, v_active, 2);
+	max96792_write_bulk_value(priv, 0x242, 0, 3);
+	max96792_write_bulk_value(priv, 0x245, v_sw * h_tot, 3);
+	max96792_write_bulk_value(priv, 0x248,
+				  (v_active + v_fp + v_bp) * h_tot, 3);
+
+	max96792_write_bulk_value(priv, 0x24B, 0, 3);
+	max96792_write_bulk_value(priv, 0x24E, h_sw, 2);
+	max96792_write_bulk_value(priv, 0x250, h_active + h_fp + h_bp, 2);
+	max96792_write_bulk_value(priv, 0x252, v_tot, 2); // HS pulses per frame = v_tot * h_tot / h_tot = v_tot
+	max96792_write_bulk_value(priv, 0x254,
+				  h_tot * (v_sw + v_bp) + (h_sw + h_bp), 3); // VS edge to first DE delay
+	max96792_write_bulk_value(priv, 0x257, h_active, 2); // DE high period = h_active
+	max96792_write_bulk_value(priv, 0x259, h_fp + h_sw + h_bp, 2); // DE low period = horizontal blanking
+	max96792_write_bulk_value(priv, 0x25B, v_active, 2); // Active lines per frame = v_active
 
 	/* Generate VS, HS and DE in free-running mode. */
-	max96792_write(priv, 0x1050, 0xfb);
+	max96792_write(priv, 0x240, 0xfb);
 
 	/* Configure Video Pattern Generator. */
 	if (priv->pattern == max96792_PATTERN_CHECKERBOARD) {
 		/* Set checkerboard pattern size. */
-		max96792_write(priv, 0x1074, 0x3c);
-		max96792_write(priv, 0x1075, 0x3c);
-		max96792_write(priv, 0x1076, 0x3c);
+		max96792_write(priv, 0x264, 0x3c);
+		max96792_write(priv, 0x265, 0x3c);
+		max96792_write(priv, 0x266, 0x3c);
 
 		/* Set checkerboard pattern colors. */
-		max96792_write_bulk_value(priv, 0x106e, 0xfecc00, 3);
-		max96792_write_bulk_value(priv, 0x1071, 0x006aa7, 3);
+		max96792_write_bulk_value(priv, 0x25E, 0xfecc00, 3);
+		max96792_write_bulk_value(priv, 0x261, 0x006aa7, 3);
 
 		/* Generate checkerboard pattern. */
-		max96792_write(priv, 0x1051, 0x10);
+		max96792_write(priv, 0x241, 0x10);
 	} else {
 		/* Set gradient increment. */
-		max96792_write(priv, 0x106d, 0x10);
+		max96792_write(priv, 0x25D, 0x10);
 
 		/* Generate gradient pattern. */
-		max96792_write(priv, 0x1051, 0x20);
+		max96792_write(priv, 0x241, 0x20);
 	}
 }
 
@@ -474,7 +484,7 @@ static void max96792_remove(struct i2c_client *client)
 }
 
 static const struct of_device_id max96792_of_table[] = {
-	{ .compatible = "maxim,max96792A" },
+	{ .compatible = "maxim,max96792A,v1" },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, max96792_of_table);
@@ -490,6 +500,6 @@ static struct i2c_driver max96792_i2c_driver = {
 
 module_i2c_driver(max96792_i2c_driver);
 
-MODULE_DESCRIPTION("Maxim max96792 Quad GMSL2 Deserializer Driver");
+MODULE_DESCRIPTION("Maxim MAX96792A Quad GMSL2 Deserializer Driver");
 MODULE_AUTHOR("Cuong Le Duc <cuong.le@ologn.tech>");
 MODULE_LICENSE("GPL");
